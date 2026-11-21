@@ -1,0 +1,45 @@
+```xml
+<svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+    <!-- Background -->
+    <rect width="200" height="200" fill="#f5f5f5"/>
+
+    <!-- Open Book -->
+    <path d="M20,100 Q50,50 80,100 Q110,150 130,100 Q160,50 180,100"
+          fill="none" stroke="#333" stroke-width="2" stroke-linecap="round"/>
+
+    <!-- Left Page -->
+    <rect x="20" y="30" width="60" height="140" rx="5" fill="#fff" stroke="#333" stroke-width="1"/>
+
+    <!-- Right Page -->
+    <rect x="130" y="30" width="60" height="140" rx="5" fill="#fff" stroke="#333" stroke-width="1"/>
+
+    <!-- Title -->
+    <text x="100" y="50" text-anchor="middle" font-family="Arial" font-size="12" fill="#333">STYLISH</text>
+
+    <!-- Colorful Elements -->
+    <!-- Rainbow Gradient -->
+    <defs>
+        <linearGradient id="rainbow" x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" stop-color="#ff0000" />
+            <stop offset="25%" stop-color="#ff7f00" />
+            <stop offset="50%" stop-color="#ffff00" />
+            <stop offset="75%" stop-color="#00ff00" />
+            <stop offset="100%" stop-color="#0000ff" />
+        </linearGradient>
+    </defs>
+
+    <!-- Sparkles -->
+    <circle cx="30" cy="80" r="2" fill="white" opacity="0.8"/>
+    <circle cx="170" cy="80" r="2" fill="white" opacity="0.8"/>
+    <circle cx="100" cy="40" r="1.5" fill="white" opacity="0.8"/>
+    <circle cx="120" cy="120" r="1.5" fill="white" opacity="0.8"/>
+
+    <!-- Gradient Accent -->
+    <path d="M20,100 Q50,120 80,100 Q110,80 130,100 Q160,120 180,100"
+          fill="url(#rainbow)" stroke="#333" stroke-width="0.5"/>
+
+    <!-- Sparkle on Pages -->
+    <circle cx="40" cy="60" r="1.5" fill="white" opacity="0.9"/>
+    <circle cx="140" cy="60" r="1.5" fill="white" opacity="0.9"/>
+</svg>
+```

@@ -1,0 +1,411 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SVG World Model</title>
+<style>
+:root { --bg:#0d0c14; --panel:#17161f; --ink:#fff1e8; --muted:#9a96b0; --line:#2a2838; --accent:#ffa300; --ok:#00e436; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 13px/1.45 ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+.wrap { display: flex; gap: 14px; padding: 14px; justify-content: center; align-items: flex-start; flex-wrap: wrap; }
+#view { width: min(960px, 100%); aspect-ratio: 16 / 12; border: 2px solid var(--line); border-radius: 6px; background: #000; display: block; }
+#view .hud { font: bold 0.66px ui-monospace, monospace; fill: #fff1e8; stroke: #000; stroke-width: 0.14px; paint-order: stroke; }
+#view .spr { transition-property: transform, opacity; transition-timing-function: linear; }
+#view .hero { filter: drop-shadow(0 0 0.06px rgba(255,255,255,.95)) drop-shadow(0 0 0.18px rgba(255,241,232,.55)); }
+#view .big { font: bold 0.7px ui-monospace, monospace; fill: #ffa300; text-anchor: middle; }
+#view .say { font: 0.42px ui-monospace, monospace; fill: #ffec27; }
+aside { width: 340px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
+h2 { font-size: 12px; margin: 10px 0 6px; color: var(--accent); letter-spacing: .06em; }
+h2:first-child { margin-top: 0; }
+.stats { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 10px; color: var(--muted); }
+.stats b { color: var(--ink); font-weight: 600; }
+pre { margin: 0; background: #08070d; border: 1px solid var(--line); border-radius: 6px; padding: 6px; white-space: pre-wrap; word-break: break-all; font-size: 10.5px; max-height: 140px; overflow: auto; color: #c2c3c7; }
+pre.out { color: #00e436; }
+#sprites { display: grid; grid-template-columns: repeat(8, 1fr); gap: 4px; }
+#sprites figure { margin: 0; text-align: center; font-size: 9px; color: var(--muted); }
+#sprites svg { width: 100%; aspect-ratio: 1; background: #08070d; border-radius: 4px; display: block; }
+#log p { margin: 0 0 5px; } #log { max-height: 120px; overflow: auto; }
+.keys { color: var(--muted); margin-top: 8px; }
+button { font: inherit; background: var(--accent); color: #111; border: 0; border-radius: 6px; padding: 6px 10px; cursor: pointer; margin: 8px 6px 0 0; }
+#overlay { position: fixed; inset: 0; background: rgba(8,7,14,.94); display: grid; place-items: center; z-index: 10; padding: 16px; }
+#overlay.hidden { display: none; }
+#overlay .box { max-width: 680px; width: 100%; text-align: center; }
+#overlay h1 { color: var(--accent); letter-spacing: .1em; margin: 0 0 6px; font-size: 26px; }
+#overlay p { color: var(--muted); }
+#wform { display: flex; gap: 8px; margin-top: 12px; }
+#wprompt { flex: 1; min-width: 0; font: inherit; font-size: 16px; padding: 12px; border-radius: 8px; border: 2px solid var(--line); background: #08070d; color: var(--ink); }
+#wchips { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
+#wchips button { background: #2a2838; color: var(--ink); margin: 0; font-size: 12px; }
+#wstatus { margin-top: 12px; color: var(--accent); min-height: 18px; }
+</style>
+</head>
+<body>
+<div id="overlay"><div class="box">
+  <h1>SVG WORLD MODEL</h1>
+  <p>Describe a world. A director model designs it, a pixel model draws its sprites, and a world model then generates every frame as SVG: current frame + your key → next frame.</p>
+  <form id="wform"><input id="wprompt" maxlength="200" placeholder="a haunted swamp kingdom ruled by frog wizards" autofocus><button type="submit">Generate world</button></form>
+  <div id="wchips"></div><div id="wstatus"></div>
+</div></div>
+<div class="wrap">
+  <svg id="view" viewBox="0 0 16 12" shape-rendering="crispEdges" xmlns="http://www.w3.org/2000/svg">
+    <defs id="defs"></defs>
+    <rect id="ground" width="16" height="12" fill="#1D2B53"/>
+    <g id="specks"></g>
+    <g id="frame"></g>
+    <g id="overlaytext"></g>
+  </svg>
+  <aside>
+    <h2 id="title">WORLD MODEL</h2>
+    <div class="stats">
+      <span>frame <b id="sFrame">0</b></span><span>step <b id="sMs">–</b></span>
+      <span>tokens <b id="sTok">–</b></span><span>speed <b id="sRate">–</b></span>
+    </div>
+    <h2>INPUT · action + current SVG</h2>
+    <pre id="inSvg">–</pre>
+    <h2>OUTPUT · next SVG (streaming)</h2>
+    <pre id="outSvg" class="out">–</pre>
+    <h2>IMAGINED FUTURES · one per key, computed on both GPUs</h2>
+    <div id="futures" style="display:grid;grid-template-columns:repeat(5,1fr);gap:4px"></div>
+    <h2>SPRITES · drawn by the pixel model</h2>
+    <div id="sprites"></div>
+    <h2>STORY</h2>
+    <div id="log"></div>
+    <div class="keys">Arrows/WASD move (↑ jumps in platformer) · the world advances every frame · every possible next frame is precomputed on both GPUs · N new world</div>
+    <button id="pause" type="button">Pause</button><button id="futuresBtn" type="button">Imagine futures: off</button><button id="smoothBtn" type="button">Smoothing: on</button><button id="export" type="button">Export frame (.svg)</button>
+  </aside>
+</div>
+<script>
+"use strict";
+const NS = "http://www.w3.org/2000/svg";
+const PICO = ["#000000","#1D2B53","#7E2553","#008751","#AB5236","#5F574F","#C2C3C7","#FFF1E8","#FF004D","#FFA300","#FFEC27","#00E436","#29ADFF","#83769C","#FF77A8","#FFCCAA"];
+const HEX = "0123456789abcdef";
+const COLOR = { "green": 3, "dark green": 1, "sand": 15, "white": 6, "grey": 5, "brown": 4, "purple": 2, "blue": 1, "dark blue": 1,
+                "red": 2, "orange": 4, "pink": 2, "black": 0, "yellow": 4 };
+const EMPTY = '<svg viewBox="0 0 16 12"></svg>';
+const RESET = '<svg viewBox="0 0 16 12"><text x="0" y="1">HP 5 XP 0 T 0</text><use href="#hero" x="8" y="6"/></svg>';
+const ENVGEN = !new URLSearchParams(location.search).has("v1");  // v2+: the model generates the environment from an empty frame
+const MULTI = ENVGEN && !new URLSearchParams(location.search).has("v3");  // multi-genre world model: actions carry a genre prefix
+const GENRE_ACTIONS = { survivors: ["up", "down", "left", "right", "stay"], snake: ["up", "down", "left", "right", "stay"],
+                        shooter: ["left", "right", "stay"], dodge: ["left", "right", "stay"], platformer: ["left", "right", "up", "stay"] };
+const genreOf = () => (MULTI && spec && spec.genre) ? spec.genre : null;
+const IDS = ["hero", "e1", "e2", "e3", "o1", "o2", "gem", "b"];
+const $ = id => document.getElementById(id);
+let spec = null, frameText = EMPTY, frameNo = 0, running = false, paused = false, held = null, tap = null, gen = 0;
+const names = {};
+
+// Le Chat: Mistral's pixel cat (mistral.ai), exact pixels and colours, animated at its native 150 ms per frame
+const MISTRAL_CAT = {"w":16,"h":13,"palette":{"a":"#151524","b":"#F5F4EF","c":"#FA500F","d":"#FFC800"},"frames":[[".....a...a......",".....aa.aa......",".....aaaaa......",".....ababa......","....aaabaaa.....","......cccc......","......adaaa.....","......aaaaa...a.","......aaaaaa..a.","......aaaaaa..a.",".....aaaaaaa.a..",".....aaaaaaa.a..","..aaaaaaaaaaa..."],[".....a...a......",".....aa.aa......",".....aaaaa......",".....ababa......","....aaabaaa.....","......cccc......","......adaaa.....","......aaaaa..a..","......aaaaaa..a.","......aaaaaa..a.",".....aaaaaaa.a..",".....aaaaaaa.a..","..aaaaaaaaaaa..."],[".....a...a......",".....aa.aa......",".....aaaaa......",".....ababa......","....aaabaaa.....","......cccc......","......adaaa.....","......aaaaa.....","......aaaaaa.a..","......aaaaaa..a.",".....aaaaaaa.aa.",".....aaaaaaa.a..","..aaaaaaaaaaa..."],[".....a...a......",".....aa.aa......",".....aaaaa......",".....ababa......","....aaabaaa.....","......cccc......","......adaaa.....","......aaaaa...a.","......aaaaaa..a.","......aaaaaa..a.",".....aaaaaaa.a..",".....aaaaaaa.a..","..aaaaaaaaaaa..."],[".....a...a......",".....aa.aa......",".....aaaaa......",".....ababa......","....aaabaaa.....","......cccc......","......adaaa.....","......aaaaa....a","......aaaaaa..a.","......aaaaaa..a.",".....aaaaaaa.a..",".....aaaaaaa.a..","..aaaaaaaaaaa..."],[".....a...a......",".....aa.aa......",".....aaaaa......",".....ababa......","....aaabaaa.....","......cccc......","......adaaa.....","......aaaaa.....","......aaaaaa.a..","......aaaaaa..a.",".....aaaaaaa.aa.",".....aaaaaaa.a..","..aaaaaaaaaaa..."],["................",".....a...a......",".....aa.aa......",".....aaaaa......",".....ababa......","....aaabaaa.....","......cccca.....","......adaaa.....","......aaaaaa..a.","......aaaaaa..a.",".....aaaaaaa.aa.",".....aaaaaaa.a..","..aaaaaaaaaaa..."],["................","....a...a.......","....aa.aa.......","....aaaaa.......","....ababa.......","...aaabaaa......",".....ccccaa.....","......daaaa..a..","......aaaaaa..a.","......aaaaaa..a.",".....aaaaaaa.a..",".....aaaaaaa.a..","..aaaaaaaaaaa..."],["................","....a...a.......","....aa.aa.......","....aaaaa.......","....ababa.......","...aaabaaa......",".....ccccaa.....","......daaaa...a.","......aaaaaa.a..","......aaaaaa.a..",".....aaaaaaa.a..",".....aaaaaaa.a..","..aaaaaaaaaaa..."],["................","....a...a.......","....aa.aa.......","....aaaaa.......","....ababa.......","...aaabaaa......",".....ccccaa.....","......daaaa..a..","......aaaaaa..a.","......aaaaaa..a.",".....aaaaaaa.a..",".....aaaaaaa.a..","..aaaaaaaaaaa..."],["................","................","....a...a.......","....aa.aa.......","....aaaaa.......","....ababa.......","...aaabaaaa.....",".....ccccaa....a","......daaaaa..a.","......aaaaaa..a.",".....aaaaaaa.a..",".....aaaaaaa.a..","..aaaaaaaaaaa..."],["................","................","....a...a.......","....aa.aa.......","....aaaaa.......","....ababa.......","...aaabaaaa.....",".....ccccaa..a..","......daaaaa..a.","......aaaaaa..a.",".....aaaaaaa.a..",".....aaaaaaa.a..","..aaaaaaaaaaa..."],["................","................","....a...a.......","....aa.aa.......","....aaaaa.......","....ababa.......","...aaabaaaa.....",".....ccccaa....a","......daaaaa..a.","......aaaaaa..a.",".....aaaaaaa.a..",".....aaaaaaa.a..","..aaaaaaaaaaa..."],["................","................","....a...a.......","....aa.aa.......","....aaaaa.......","....ababa.......","...aaabaaaa.....",".....ccccaa..a..","......daaaaaa...","......aaaaaaa...",".....aaaaaaa.a..",".....aaaaaaa.a..","..aaaaaaaaaaa..."],["................","................","....a...a.......","....aa.aa.......","....aaaaa.......","....ababa.......","...aaabaaaa.....",".....ccccaa...a.","......daaaaa.a..","......aaaaaa.a..",".....aaaaaaa.a..",".....aaaaaaa.a..","..aaaaaaaaaaa..."],["................","................","....a...a.......","....aa.aa.......","....aaaaa.......","....ababa.......","...aaabaaaa.....",".....ccccaa....a","......daaaaa..a.","......aaaaaa..a.",".....aaaaaaa.a..",".....aaaaaaa.a..","..aaaaaaaaaaa..."],["................","................","....a...a.......","....aa.aa.......","....aaaaa.......","....ababa.......","...aaabaaaa.....",".....ccccaa.....","......daaaaa...a","......aaaaaa..a.",".....aaaaaaa.aa.",".....aaaaaaa.a..","..aaaaaaaaaaa..."],["................","....a...a.......","....aa.aa.......","....aaaaa.......","....ababa.......","...aaabaaa......",".....ccccaa.....","......daaaa..a..","......aaaaaa..a.","......aaaaaa..a.",".....aaaaaaa.a..",".....aaaaaaa.a..","..aaaaaaaaaaa..."],[".....a...a......",".....aa.aa......",".....aaaaa......",".....ababa......","....aaabaaa.....","......cccc......","......adaaa.....","......aaaaa...a.","......aaaaaa.a..","......aaaaaa.a..",".....aaaaaaa.a..",".....aaaaaaa.a..","..aaaaaaaaaaa..."]]};
+let catFrame = 0, catTimer = null;
+function drawCat(g, scaleTo1) {
+  const C = MISTRAL_CAT, rows = C.frames[catFrame % C.frames.length], u = scaleTo1 ? 1 / C.w : 1, oy = scaleTo1 ? (C.w - C.h) / C.w : 0;
+  g.replaceChildren();
+  rows.forEach((row, y) => [...row].forEach((ch, x) => {
+    if (ch === ".") return;
+    const r = document.createElementNS(NS, "rect");
+    r.setAttribute("x", x * u); r.setAttribute("y", oy + y * u); r.setAttribute("width", u * 1.02); r.setAttribute("height", u * 1.02);
+    r.setAttribute("fill", C.palette[ch]); g.append(r);
+  }));
+}
+function startCat() {
+  const g = ensureSymbol("hero"), c = card("hero");
+  c.querySelector("figcaption").textContent = "hero: Le Chat (Mistral's pixel cat)";
+  c.querySelector("svg").setAttribute("viewBox", `0 0 ${MISTRAL_CAT.w} ${MISTRAL_CAT.w}`);
+  const tick = () => { drawCat(g, true); drawCat(c.querySelector("g"), false); catFrame++; };
+  tick(); clearInterval(catTimer); catTimer = setInterval(tick, 150);
+}
+// ---------- sprites: AI pixel rows -> <g id> symbols in <defs> (every <use> updates live as rows stream in) ----------
+function ensureSymbol(id) {
+  let g = document.getElementById(id);
+  if (!g) { g = document.createElementNS(NS, "g"); g.id = id; $("defs").append(g); }
+  return g;
+}
+function drawRows(g, rows, scale) {
+  g.replaceChildren();
+  rows.forEach((row, y) => [...row].forEach((ch, x) => {
+    if (ch === ".") return;
+    const r = document.createElementNS(NS, "rect");
+    r.setAttribute("x", x * scale); r.setAttribute("y", y * scale); r.setAttribute("width", scale * 1.02); r.setAttribute("height", scale * 1.02);
+    r.setAttribute("fill", PICO[HEX.indexOf(ch)]); g.append(r);
+  }));
+}
+function placeholder(id) {
+  const g = ensureSymbol(id); g.replaceChildren();
+  const r = document.createElementNS(NS, "rect");
+  r.setAttribute("x", 0.3); r.setAttribute("y", 0.3); r.setAttribute("width", 0.4); r.setAttribute("height", 0.4);
+  r.setAttribute("fill", { hero: "#FFF1E8", gem: "#FFEC27", o1: "#5F574F", o2: "#5F574F" }[id] || "#FF004D"); g.append(r);
+}
+function card(id) {
+  let f = document.getElementById("card-" + id);
+  if (!f) {
+    f = document.createElement("figure"); f.id = "card-" + id;
+    f.innerHTML = `<svg viewBox="0 0 8 8" shape-rendering="crispEdges"><g></g></svg><figcaption></figcaption>`;
+    $("sprites").append(f);
+  }
+  return f;
+}
+async function streamSprite(id, name) {
+  names[id] = name;
+  const g = ensureSymbol(id), c = card(id), cg = c.querySelector("g"); c.querySelector("figcaption").textContent = `${id}: ${name}`;
+  const rows = [];
+  try {
+    const res = await fetch("/sprite_stream", { method: "POST", headers: { "Content-Type": "application/json", "X-Atelier": "3" }, body: JSON.stringify({ name, size: 8 }) });
+    const reader = res.body.getReader(), dec = new TextDecoder(); let buf = "";
+    for (;;) {
+      const { value, done } = await reader.read(); if (done) break;
+      buf += dec.decode(value, { stream: true }); let i;
+      while ((i = buf.indexOf("\n")) >= 0) {
+        const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1); if (!line) continue;
+        const m = JSON.parse(line);
+        if (m.row) { rows.push(m.row); drawRows(g, rows, 1 / 8); drawRows(cg, rows, 1); }
+      }
+    }
+  } catch (e) { say(`sprite ${id} failed: ${e.message}`); }
+}
+
+// ---------- frames: model output SVG -> sanitized DOM (only <text> and <use> with numeric coordinates) ----------
+let pool = [], glideMs = 400, smooth = !new URLSearchParams(location.search).has("raw");
+function place(u, x, y) { u.style.transform = `translate(${x}px, ${y}px)`; u.dataset.x = x; u.dataset.y = y; }
+function renderFrame(text) {
+  const doc = new DOMParser().parseFromString(text, "image/svg+xml");
+  const root = doc.documentElement;
+  if (root.nodeName !== "svg" || doc.querySelector("parsererror")) return false;
+  const frame = $("frame"); let hud = frame.querySelector("text.hud");
+  const want = [];
+  for (const el of root.children) {
+    if (el.nodeName === "text") {
+      if (!hud) { hud = document.createElementNS(NS, "text"); hud.setAttribute("x", 0.2); hud.setAttribute("y", 0.78); hud.setAttribute("class", "hud"); frame.append(hud); }
+      hud.textContent = el.textContent.slice(0, 40);
+    } else if (el.nodeName === "use") {
+      const href = (el.getAttribute("href") || "").replace("#", ""), x = +el.getAttribute("x"), y = +el.getAttribute("y");
+      if (IDS.includes(href) && Number.isFinite(x) && Number.isFinite(y)) want.push({ k: href, x, y });
+    }
+  }
+  const free = pool.slice(), next = [];
+  for (const w of want) {  // reuse the nearest same-kind sprite within 3 cells so it glides; otherwise spawn a new one
+    let best = -1, bd = 3.5;
+    free.forEach((o, i) => { if (o && o.k === w.k) { const d = Math.abs(o.x - w.x) + Math.abs(o.y - w.y); if (d < bd) { bd = d; best = i; } } });
+    let u;
+    if (best >= 0) { u = free[best].el; free[best] = null; }
+    else { u = document.createElementNS(NS, "use"); u.setAttribute("href", "#" + w.k); u.setAttribute("class", "spr" + (w.k === "hero" ? " hero" : "")); u.style.opacity = 0; place(u, w.x, w.y); frame.append(u); requestAnimationFrame(() => { u.style.opacity = 1; }); }
+    u.style.transitionDuration = smooth ? `${glideMs}ms` : "0ms"; place(u, w.x, w.y); next.push({ k: w.k, x: w.x, y: w.y, el: u });
+  }
+  for (const o of free) if (o) { o.el.style.opacity = 0; setTimeout(() => o.el.remove(), 250); }
+  if (hud) frame.append(hud);  // HUD on top
+  pool = next;
+  return true;
+}
+function clearFrame() { $("frame").replaceChildren(); pool = []; }
+// instant feedback: as soon as the model has written the hero's new position, move the hero (rest of the frame follows)
+function previewHero(partial) {
+  const m = /<use href="#hero" x="(\d+)" y="(\d+)"\/>/.exec(partial); if (!m) return;
+  const h = pool.find(o => o.k === "hero"); if (!h || !smooth) return;
+  const x = +m[1], y = +m[2]; if (h.x !== x || h.y !== y) { h.el.style.transitionDuration = "120ms"; place(h.el, x, y); h.x = x; h.y = y; }
+}
+function frameStats(text) {
+  const m = /HP (\d+) XP (\d+) T (\d+)/.exec(text);
+  return m ? { hp: +m[1], xp: +m[2], t: +m[3], enemies: (text.match(/#e\d/g) || []).length } : null;
+}
+
+function banner(text) {
+  const g = $("overlaytext"); g.replaceChildren();
+  const t = document.createElementNS(NS, "text"); t.setAttribute("x", 8); t.setAttribute("y", 6); t.setAttribute("class", "big"); t.textContent = text; g.append(t);
+}
+// ---------- SVG story text, rendered inside the frame ----------
+let sayTimer = 0;
+function say(text, inFrame = true) {
+  const p = document.createElement("p"); p.textContent = text; $("log").prepend(p);
+  if (!inFrame) return;
+  const g = $("overlaytext"); g.replaceChildren();
+  const words = text.split(/\s+/), lines = [""];
+  for (const w of words) { if ((lines[lines.length - 1] + " " + w).length > 52) lines.push(w); else lines[lines.length - 1] += (lines[lines.length - 1] ? " " : "") + w; }
+  const shown = lines.slice(0, 3);  // a slim band under the HUD, so it never hides the player at the bottom
+  const bg = document.createElementNS(NS, "rect"); bg.setAttribute("x", 0); bg.setAttribute("y", 1.0); bg.setAttribute("width", 16);
+  bg.setAttribute("height", 0.5 * shown.length + 0.2); bg.setAttribute("fill", "rgba(0,0,0,.55)"); g.append(bg);
+  shown.forEach((ln, i) => { const t = document.createElementNS(NS, "text"); t.setAttribute("x", 0.25); t.setAttribute("y", 1.45 + 0.5 * i); t.setAttribute("class", "say"); t.textContent = ln; g.append(t); });
+  clearTimeout(sayTimer); sayTimer = setTimeout(() => g.replaceChildren(), 7000);
+}
+
+// ---------- the world-model loop: current SVG + action -> next SVG ----------
+async function streamStep(input, action, myGen) {
+  const res = await fetch("/step_stream", { method: "POST", headers: { "Content-Type": "application/json", "X-Atelier": "3" }, body: JSON.stringify({ svg: input, action, temperature: 0.3 }) });
+  const reader = res.body.getReader(), dec = new TextDecoder(); let buf = "", out = "", done = null;
+  for (;;) {
+    const { value, done: end } = await reader.read(); if (end) break;
+    buf += dec.decode(value, { stream: true }); let i;
+    while ((i = buf.indexOf("\n")) >= 0) {
+      const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1); if (!line) continue;
+      const m = JSON.parse(line);
+      if (m.error) throw new Error(m.error);
+      if (m.text) { out += m.text; if (myGen === gen) { $("outSvg").textContent = out; if (frameNo > 0) previewHero(out); } }
+      if (m.done) done = m;
+    }
+  }
+  return { svg: out, tokens: done && done.tokens };
+}
+let futuresOn = false, story = [];
+function thumb(svgText, label, chosen) {
+  const doc = new DOMParser().parseFromString(svgText, "image/svg+xml"), wrap = document.createElement("figure");
+  wrap.style.margin = "0"; wrap.style.fontSize = "9px"; wrap.style.textAlign = "center"; wrap.style.color = chosen ? "#ffa300" : "#9a96b0";
+  const sv = document.createElementNS(NS, "svg"); sv.setAttribute("viewBox", "0 0 16 12"); sv.setAttribute("shape-rendering", "crispEdges");
+  sv.style.width = "100%"; sv.style.background = $("ground").getAttribute("fill"); sv.style.border = chosen ? "1px solid #ffa300" : "1px solid #2a2838";
+  for (const el of doc.documentElement.children) {
+    if (el.nodeName !== "use") continue;
+    const href = (el.getAttribute("href") || "").replace("#", ""); if (!IDS.includes(href)) continue;
+    const u = document.createElementNS(NS, "use"); u.setAttribute("href", "#" + href); u.setAttribute("x", +el.getAttribute("x")); u.setAttribute("y", +el.getAttribute("y")); sv.append(u);
+  }
+  const cap = document.createElement("figcaption"); cap.textContent = label; wrap.append(sv, cap); return wrap;
+}
+// walking off the edge: the world model dreams up the next area (survivors) or next level (platformer); stats carry over
+async function edgeTransition(action) {
+  const g = genreOf() || "survivors";
+  const h = /#hero" x="(\d+)" y="(\d+)"/.exec(frameText); if (!h) return null;
+  const x = +h[1], y = +h[2];
+  const exits = g === "survivors" ? { left: x === 0, right: x === 15, up: y <= 1, down: y === 11 } : g === "platformer" ? { right: x === 15 } : {};
+  if (!exits[action]) return null;
+  const r = await (await fetch("/start", { method: "POST", headers: { "Content-Type": "application/json", "X-Atelier": "3" }, body: JSON.stringify({ genre: g, layout: ["arena", "forest", "maze", "islands", "cave"][rooms % 5] }) })).json();
+  if (r.error) return null;
+  rooms++;
+  const oldHud = (/<text[^>]*>([^<]*)<\/text>/.exec(frameText) || [])[1];
+  let next = oldHud ? r.svg.replace(/(<text[^>]*>)[^<]*(<\/text>)/, `$1${oldHud}$2`) : r.svg;
+  if (g === "survivors") {
+    const nx = action === "left" ? 15 : action === "right" ? 0 : x, ny = action === "up" ? 11 : action === "down" ? 1 : y;
+    if (!new RegExp(`x="${nx}" y="${ny}"`).test(next)) next = next.replace(/(#hero" x=")\d+(" y=")\d+/, `$1${nx}$2${ny}`);
+  }
+  story.push(g === "platformer" ? `Le Chat cleared level ${rooms}` : `Le Chat crossed into area ${rooms + 1}`);
+  say(g === "platformer" ? `Level ${rooms + 1}: the world model dreams up a new level.` : `Area ${rooms + 1}: the world model dreams up what lies beyond the edge.`, false);
+  setTimeout(dream, 50);
+  return { svg: next, source: r.source };
+}
+let rooms = 0;
+async function step(myGen) {
+  const first = frameNo === 0, g = genreOf(), prefix = g ? g + ": " : "";
+  const t0 = performance.now(); let out, info = "";
+  const edge = !first && (held || tap) ? await edgeTransition(held || tap) : null;
+  if (edge) {
+    out = edge.svg; tap = null; info = `new area by ${edge.source === "model" ? "the model" : "fallback"}`;
+    $("inSvg").textContent = `${prefix}start  (Le Chat walked off the edge)\n${EMPTY}`; $("outSvg").textContent = out;
+  } else if (first && MULTI) {
+    $("inSvg").textContent = `${prefix}start\n${EMPTY}`;
+    const r = await (await fetch("/start", { method: "POST", headers: { "Content-Type": "application/json", "X-Atelier": "3" }, body: JSON.stringify({ genre: g, layout: spec.layout || "" }) })).json();
+    if (r.error) throw new Error(r.error);
+    out = r.svg; $("outSvg").textContent = out;
+    info = r.source === "model" ? `env by model (${r.tries} ${r.tries > 1 ? "tries" : "try"})` : "env: procedural fallback";
+    say(r.source === "model" ? "The world model dreamed up this environment from an empty frame." : "Environment seeded procedurally; the world model runs everything from here.", false);
+  } else if (first) {
+    const action = ENVGEN ? ("start" + (spec.layout ? " " + spec.layout : "")) : "stay", input = ENVGEN ? EMPTY : RESET;
+    $("inSvg").textContent = `${action}\n${input}`;
+    const r = await streamStep(input, action, myGen); out = r.svg; info = `${r.tokens} tok`;
+  } else if (futuresOn) {
+    const actions = (g && GENRE_ACTIONS[g]) || ["up", "down", "left", "right", "stay"];
+    const res = await (await fetch("/step_all", { method: "POST", headers: { "Content-Type": "application/json", "X-Atelier": "3" },
+      body: JSON.stringify({ svg: frameText, genre: g || "", actions, temperature: 0.3 }) })).json();
+    if (res.error) throw new Error(res.error);
+    let want = held || tap || "stay"; tap = null; if (!res.branches[want]) want = "stay";
+    out = res.branches[want].svg; info = `${actions.length} futures in ${res.ms} ms`;
+    $("inSvg").textContent = `${prefix}${want}   (imagined: ${actions.join(", ")})\n${frameText}`; $("outSvg").textContent = out;
+    $("futures").replaceChildren(...actions.map(a => thumb(res.branches[a].svg, a, a === want)));
+  } else {
+    const action = prefix + (held || tap || "stay"); tap = null;
+    $("inSvg").textContent = `${action}\n${frameText}`;
+    const r = await streamStep(frameText, action, myGen); out = r.svg; info = `${r.tokens} tok`;
+  }
+  if (myGen !== gen) return;
+  const ms = performance.now() - t0;
+  if (out.endsWith("</svg>") && renderFrame(out)) {
+    const before = frameStats(frameText), after = frameStats(out);
+    frameText = out; frameNo++;
+    if (frameNo === 1) say(`Arrow keys move Le Chat${genreOf() === "platformer" ? " (↑ jumps)" : ""}. Every frame is written by the model.`);
+    if (before && after && after.hp < before.hp) { story.push(`Le Chat was hit (HP ${after.hp})`); say(`Hit! HP ${after.hp}.`, false); }
+    const sc = /SCORE (\d+)|XP (\d+)/.exec(out), sc0 = /SCORE (\d+)|XP (\d+)/.exec(frameText);
+    if (after && after.hp === 0) { story.push("Le Chat fell"); say("Le Chat falls… the world model dreams up a new land."); }
+  } else { frameNo = 0; say("Invalid frame — regenerating the world.", false); }
+  glideMs = Math.min(900, Math.max(150, ms * 0.9));
+  $("sFrame").textContent = frameNo; $("sMs").textContent = `${Math.round(ms)} ms`;
+  $("sTok").textContent = info; $("sRate").textContent = `${(1000 / ms).toFixed(1)} fps`;
+  if (frameNo > 0 && frameNo % 12 === 0) dream();
+  if (frameNo > 0 && frameNo % 30 === 0) evolve();
+}
+// the narrator keeps dreaming up the next part of the story from what is happening in the frames
+async function dream() {
+  try {
+    const hud = (/<text[^>]*>([^<]*)<\/text>/.exec(frameText) || [])[1] || "";
+    const recent = story.splice(0).slice(-3).join("; ") || "Le Chat keeps exploring";
+    const r = await fetch("/narrate", { method: "POST", headers: { "Content-Type": "application/json", "X-Atelier": "3" },
+      body: JSON.stringify({ title: spec.title, event: `Le Chat, a brave orange cat, is in a ${genreOf() || "survival"} adventure. Status: ${hud}. Recently: ${recent}. Dream up the next part of the story.` }) });
+    const j = await r.json(); if (j.text) say(j.text);
+  } catch {}
+}
+async function run(myGen) {
+  while (myGen === gen) {
+    if (paused || document.hidden) { await new Promise(r => setTimeout(r, 200)); continue; }  // background tabs don't use the GPU
+    try { await step(myGen); } catch (e) { say("step failed: " + e.message, false); await new Promise(r => setTimeout(r, 800)); }
+  }
+}
+
+// every 25 frames the director invents a new enemy; e3's sprite is redrawn live everywhere it appears
+async function evolve() {
+  try {
+    const r = await fetch("/wave", { method: "POST", headers: { "Content-Type": "application/json", "X-Atelier": "3" },
+      body: JSON.stringify({ title: spec.title, number: Math.floor(frameNo / 25) + 1, previous: [names.e1, names.e2, names.e3] }) });
+    const w = await r.json(); if (w.error) return;
+    say(`${w.name.toUpperCase()}: ${w.taunt}`); streamSprite("e3", w.name);
+  } catch {}
+}
+
+async function startWorld(prompt) {
+  prompt = prompt.trim() || "a haunted swamp kingdom ruled by frog wizards";
+  $("wstatus").textContent = "The director model is designing your world…";
+  const r = await fetch("/arena", { method: "POST", headers: { "Content-Type": "application/json", "X-Atelier": "3" }, body: JSON.stringify({ prompt }) });
+  spec = await r.json();
+  if (spec.error || !spec.enemies) { $("wstatus").textContent = "World design failed: " + (spec.error || "?") + " — try again"; return; }
+  $("overlay").classList.add("hidden"); $("wstatus").textContent = "";
+  $("title").textContent = ("Le Chat · " + spec.title).toUpperCase();
+  $("ground").setAttribute("fill", PICO[COLOR[spec.ground_color] ?? 1]);
+  const specks = $("specks"); specks.replaceChildren();
+  for (let i = 0; i < 90; i++) { const s = document.createElementNS(NS, "rect"); s.setAttribute("x", ((i * 7.31) % 16).toFixed(2)); s.setAttribute("y", ((i * 3.77) % 12).toFixed(2));
+    s.setAttribute("width", 0.12); s.setAttribute("height", 0.12); s.setAttribute("fill", "rgba(255,255,255,.12)"); specks.append(s); }
+  $("log").replaceChildren(); say(spec.intro); say(`Designed by the director in ${(spec.ms / 1000).toFixed(1)} s from “${prompt}”.`, false);
+  const plan = { hero: "orange cat", e1: spec.enemies[0].name, e2: spec.enemies[1].name, e3: spec.enemies[2].name, o1: spec.obstacles[0], o2: spec.obstacles[1], gem: spec.gem,
+                 b: spec.projectile || "yellow energy bolt" };
+  if (genreOf()) say(`Genre chosen by the director: ${genreOf()}.`, false);
+  const BG = { platformer: 12, shooter: 0, dodge: 5, snake: 1 };  // side-view sky, space, road, night
+  if (BG[genreOf()] !== undefined) $("ground").setAttribute("fill", PICO[BG[genreOf()]]);
+  if (genreOf() === "platformer") plan.o2 = plan.o2 + " block";
+  $("sprites").replaceChildren();
+  IDS.forEach(id => { if (id === "hero") return; placeholder(id); streamSprite(id, plan[id]); });
+  startCat();
+  clearFrame(); banner("The world model is dreaming up your world…");
+  gen++; frameNo = 0; frameText = EMPTY; rooms = 0; run(gen);
+}
+
+const KEYMAP = { arrowup: "up", w: "up", arrowdown: "down", s: "down", arrowleft: "left", a: "left", arrowright: "right", d: "right" };
+addEventListener("keydown", e => {
+  const k = e.key.toLowerCase();
+  if (document.activeElement === $("wprompt")) return;
+  if (KEYMAP[k]) { held = tap = KEYMAP[k]; e.preventDefault(); }
+  if (k === "n") { gen++; $("overlay").classList.remove("hidden"); $("wprompt").focus(); }
+});
+addEventListener("keyup", e => { if (KEYMAP[e.key.toLowerCase()] === held) held = null; });
+$("smoothBtn").onclick = () => { smooth = !smooth; $("smoothBtn").textContent = "Smoothing: " + (smooth ? "on" : "off (raw model frames)"); };
+$("smoothBtn").textContent = "Smoothing: " + (smooth ? "on" : "off (raw model frames)");
+$("futuresBtn").onclick = () => { futuresOn = !futuresOn; $("futuresBtn").textContent = "Imagine futures: " + (futuresOn ? "on" : "off"); if (!futuresOn) $("futures").replaceChildren(); };
+$("pause").onclick = () => { paused = !paused; $("pause").textContent = paused ? "Resume" : "Pause"; };
+$("export").onclick = () => {
+  const svg = $("view").cloneNode(true); svg.removeAttribute("id"); svg.setAttribute("width", 960); svg.setAttribute("height", 720);
+  const style = document.createElementNS(NS, "style");
+  style.textContent = ".hud{font:0.62px monospace;fill:#fff1e8;stroke:#000;stroke-width:.12px;paint-order:stroke}.say{font:0.42px monospace;fill:#ffec27}";
+  svg.prepend(style);
+  const a = document.createElement("a"); a.href = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(new XMLSerializer().serializeToString(svg));
+  a.download = `world-frame-${frameNo}.svg`; a.click();
+};
+const EXAMPLES = ["Le Chat defends the moon from an invasion of alien laser mice", "Le Chat dodges falling croissants on a Paris highway",
+                  "Le Chat leaps across rooftop platforms collecting golden fish", "Le Chat grows longer eating sardines in a neon maze",
+                  "Le Chat survives a haunted cheese dungeon full of ghost rats"];
+$("wform").onsubmit = e => { e.preventDefault(); startWorld($("wprompt").value); };
+for (const ex of EXAMPLES) { const b = document.createElement("button"); b.type = "button"; b.textContent = ex; b.onclick = () => { $("wprompt").value = ex; startWorld(ex); }; $("wchips").append(b); }
+const params = new URLSearchParams(location.search);
+if (params.has("prompt")) startWorld(params.get("prompt"));
+</script>
+</body>
+</html>

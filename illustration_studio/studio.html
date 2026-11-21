@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Le Chat Atelier · SVG Studio</title><link rel="stylesheet" href="/studio.css"><script defer src="/studio.js"></script></head>
+<body><header><div class="brand"><span class="mark" aria-hidden="true">✳</span>Le Chat Atelier</div><div class="connection"><i id="lamp"></i><span id="connection">Connecting</span></div></header>
+<main><section class="control"><h1>Illustration<br><em>studio.</em></h1>
+<form id="composer"><label for="prompt">Your prompt</label><textarea id="prompt" required maxlength="2000" placeholder="Describe an illustration…" rows="4"></textarea>
+<div class="options"><label for="model">Model</label><select id="model"><option value="step-0625">Ministral 3B · Fine-tuned</option><option value="base">Ministral 3B · Base</option></select></div>
+<button class="primary" id="send" type="submit">Generate SVG <span aria-hidden="true">↗</span></button></form>
+<div class="suggestions"><h2>Try a prompt</h2><button>A stack of colorful books</button><button>A red teapot with a curved handle</button><button>A sailboat on blue waves</button></div>
+<section class="history"><h2>Recent drawings</h2><div id="history"></div></section></section>
+<section class="workspace"><div class="artboard"><div class="board-head"><span class="board-title">Artboard</span><div class="tabs"><button id="view" aria-pressed="true">Preview</button><button id="source" aria-pressed="false">SVG code</button></div></div>
+<div class="stage" id="stage"><div class="paper"><img id="image" alt="Illustration preview"><div id="empty">Your illustration will appear here.</div></div></div><pre id="code" hidden tabindex="0"></pre>
+<div class="board-foot"><span id="board-label">Canvas</span><a id="download" download="illustration.svg" hidden>Download SVG ↓</a></div></div>
+<div class="caption"><div><h2 id="caption">Untitled illustration</h2><output id="status" aria-live="polite">Ready for a prompt</output></div><span class="signal" id="signal" hidden>●</span></div>
+</section></main></body></html>

@@ -1,0 +1,30 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Le Chat Atelier</title>
+<style>
+*{box-sizing:border-box}body{margin:0 auto;max-width:1040px;padding:5vw 6vw;background:#f9f6f0;color:#29291f;font:16px system-ui,sans-serif}h1{font:500 clamp(42px,8vw,88px)/1 Georgia,serif;letter-spacing:-.055em;margin:0 0 36px}main{display:grid;grid-template-columns:minmax(220px,1fr) 1.25fr;gap:32px;align-items:start}textarea,select,button{font:inherit}textarea{display:block;padding:15px;width:100%;height:110px;resize:vertical;background:white;border:1px solid #b7b3a8;border-radius:6px;margin:8px 0 14px}select{padding:8px}button{background:#293a2d;color:white;border:0;border-radius:5px;padding:11px 16px;cursor:pointer}figure{margin:0;aspect-ratio:1;background:white;border:1px solid #e3ded3;display:grid;place-items:center}img{width:100%;height:100%;object-fit:contain}img:not([src]){visibility:hidden}output{display:block;font:13px/1.4 ui-monospace,monospace;margin:14px 0}a{color:inherit}details{margin-top:20px}pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:300px;overflow:auto}@media(max-width:650px){main{grid-template-columns:1fr}}
+</style>
+<h1>Le Chat Atelier</h1><main><form><label for="prompt">Describe an illustration</label><textarea id="prompt" required>A stack of colorful books with a pink book on top</textarea>
+<select id="model" aria-label="Model"><option value="latest">Latest checkpoint</option><option value="base">Base model</option></select> <button id="go">Draw</button><output id="status" aria-live="polite"></output><a id="download" download="illustration.svg" hidden>Download SVG</a></form>
+<figure><img id="preview" alt="Generated illustration"></figure></main><details><summary>SVG source</summary><pre id="code"></pre></details>
+<script>
+const q=id=>document.getElementById(id);let active;
+document.querySelector('form').onsubmit=async e=>{
+ e.preventDefault();if(active){active.abort();return}
+ const ctl=new AbortController();active=ctl;q('go').textContent='Stop';q('download').hidden=true;q('preview').removeAttribute('src');q('code').textContent='';q('status').textContent='Starting…';
+ let source='',pending='',name='',firstPath=null,start=performance.now(),last=0;
+ function draw(final=false){if(!final && performance.now()-last<200)return;last=performance.now();q('code').textContent=source;
+ const i=source.indexOf('<svg'),j=source.indexOf('</svg>',i);if(i<0)return false;
+ const partial=source.slice(i,source.lastIndexOf('>')+1);const svg=j>=0?source.slice(i,j+6):partial+'</svg>';
+ const root=new DOMParser().parseFromString(svg,'image/svg+xml').documentElement;if(root.localName!=='svg'||root.namespaceURI!=='http://www.w3.org/2000/svg'||!root.children.length)return false;
+ const elements=new Set('svg g path rect circle ellipse line polyline polygon defs linearGradient radialGradient stop clipPath title desc'.split(' '));
+ const attrs=new Set('xmlns viewBox width height fill stroke d points x y x1 y1 x2 y2 cx cy r rx ry fx fy id offset stop-color stop-opacity fill-rule fill-opacity stroke-width stroke-linejoin stroke-linecap stroke-dasharray stroke-opacity opacity transform gradientUnits gradientTransform clip-path'.split(' '));
+ for(const el of [root,...root.querySelectorAll('*')]){if(!elements.has(el.localName)||el.namespaceURI!==root.namespaceURI)return false;
+ for(const a of [...el.attributes]){if(!attrs.has(a.name)||(/url\s*\(/i.test(a.value)&&!/^url\(#[\w.-]+\)$/.test(a.value)))el.removeAttribute(a.name)}}
+ const uri='data:image/svg+xml;charset=utf-8,'+encodeURIComponent(new XMLSerializer().serializeToString(root));q('preview').src=uri;if(firstPath===null)firstPath=((performance.now()-start)/1000).toFixed(1);
+ if(j>=0){q('download').href=uri;q('download').hidden=false}return j>=0}
+ try{
+ const res=await fetch('/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt:q('prompt').value,model:q('model').value}),signal:ctl.signal});if(!res.ok)throw Error('Request failed');
+ const reader=res.body.pipeThrough(new TextDecoderStream()).getReader();while(true){const {done,value}=await reader.read();if(done)break;pending+=value;let cut;while((cut=pending.indexOf('\n'))>=0){const x=JSON.parse(pending.slice(0,cut));pending=pending.slice(cut+1);if(x.error)throw Error(x.error);if(x.model){name=x.model;q('status').textContent='Drawing with '+name+'…'}if(x.text){source+=x.text;draw()}if(x.done){const complete=draw(true);q('status').textContent=name+' · '+x.tokens+' tokens · '+x.seconds+' s'+(firstPath?' · first shape '+firstPath+' s':'')+(complete?'':' · incomplete SVG')}}}
+ }catch(err){q('status').textContent=ctl.signal.aborted?'Stopped':err.message}finally{active=null;q('go').textContent='Draw'}
+};
+</script></html>

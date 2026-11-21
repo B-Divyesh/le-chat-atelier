@@ -1,0 +1,329 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Atelier Quest</title>
+<style>
+:root { --bg:#111018; --panel:#1b1a26; --ink:#fff1e8; --muted:#9a96b0; --line:#2c2a3d; --accent:#ffa300; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.4 ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+.wrap { display: flex; gap: 14px; padding: 14px; justify-content: center; flex-wrap: wrap; }
+canvas#game { image-rendering: pixelated; border: 2px solid var(--line); border-radius: 6px; background: #000; max-width: 100%; }
+aside { width: 300px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
+aside h2 { font-size: 13px; margin: 0 0 8px; color: var(--accent); letter-spacing: .04em; }
+.stat { color: var(--muted); font-size: 12px; margin-bottom: 10px; }
+#sprites { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; max-height: 470px; overflow: auto; }
+.sp { display: flex; gap: 8px; align-items: center; background: #0c0b12; border-radius: 6px; padding: 4px 6px; font-size: 11px; }
+.sp canvas { width: 32px; height: 32px; image-rendering: pixelated; flex: none; }
+.sp span { color: var(--muted); }
+.keys { color: var(--muted); font-size: 12px; margin-top: 10px; line-height: 1.6; }
+.keys b { color: var(--ink); }
+#overlay { position: fixed; inset: 0; background: rgba(8,7,14,.92); display: grid; place-items: center; z-index: 10; padding: 16px; }
+#overlay.hidden { display: none; }
+#overlay .box { max-width: 640px; width: 100%; text-align: center; }
+#overlay h1 { color: var(--accent); letter-spacing: .12em; font-size: 28px; margin: 0 0 8px; }
+#overlay p { color: var(--muted); }
+#wform { display: flex; gap: 8px; margin-top: 14px; }
+#wprompt { flex: 1; min-width: 0; font: inherit; font-size: 16px; padding: 12px; border-radius: 8px; border: 2px solid var(--line); background: #0c0b12; color: var(--ink); }
+#wchips { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
+#wchips button { background: #2c2a3d; color: var(--ink); font-size: 12px; margin: 0; }
+#wstatus { margin-top: 14px; color: var(--accent); min-height: 20px; }
+#story { font-size: 12px; line-height: 1.5; max-height: 150px; overflow: auto; margin-bottom: 12px; color: var(--ink); }
+#story p { margin: 0 0 6px; } #story p.sys { color: var(--muted); }
+button { font: inherit; background: var(--accent); color: #111; border: 0; border-radius: 6px; padding: 6px 10px; cursor: pointer; margin-top: 8px; }
+</style>
+</head>
+<body>
+<div id="overlay"><div class="box">
+  <h1>ATELIER QUEST</h1>
+  <p>Describe a world. The AI designs it, then draws every tile, creature and item as you explore.</p>
+  <form id="wform"><input id="wprompt" maxlength="200" placeholder="a haunted swamp kingdom ruled by frog wizards" autofocus><button type="submit">Generate world</button></form>
+  <div id="wchips"></div><div id="wstatus"></div>
+</div></div>
+<div class="wrap">
+  <canvas id="game" width="960" height="640"></canvas>
+  <aside>
+    <h2 id="wtitle">STORY</h2>
+    <div id="story"></div>
+    <h2>AI SPRITE FORGE</h2>
+    <div class="stat" id="stat">waiting…</div>
+    <div id="sprites"></div>
+    <div class="keys"><b>Arrows/WASD</b> move · <b>Shift</b> sprint (stamina)<br><b>Space</b> attack · <b>N</b> new world · <b>R</b> restart</div>
+    <button id="export" type="button">Export sprites as SVG</button>
+  </aside>
+</div>
+<script>
+"use strict";
+const PICO = ["#000000","#1D2B53","#7E2553","#008751","#AB5236","#5F574F","#C2C3C7","#FFF1E8","#FF004D","#FFA300","#FFEC27","#00E436","#29ADFF","#83769C","#FF77A8","#FFCCAA"];
+const HEX = "0123456789abcdef", T = 32, CH = 16, VIEW_W = 30, VIEW_H = 20;
+const cv = document.getElementById("game"), ctx = cv.getContext("2d");
+ctx.imageSmoothingEnabled = false;
+
+// ---------- deterministic noise ----------
+function hash(x, y, s) { let h = (x * 374761393 + y * 668265263 + s * 2147483647) | 0; h = Math.imul(h ^ (h >>> 13), 1274126177); return ((h ^ (h >>> 16)) >>> 0) / 4294967296; }
+function smooth(x, y, s) {
+  const xi = Math.floor(x), yi = Math.floor(y), xf = x - xi, yf = y - yi, u = xf * xf * (3 - 2 * xf), v = yf * yf * (3 - 2 * yf);
+  const a = hash(xi, yi, s), b = hash(xi + 1, yi, s), c = hash(xi, yi + 1, s), d = hash(xi + 1, yi + 1, s);
+  return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
+}
+function fbm(x, y, s) { return smooth(x, y, s) * 0.65 + smooth(x * 2.1, y * 2.1, s + 7) * 0.35; }
+function rng(seed) { let t = seed >>> 0; return () => { t += 0x6D2B79F5; let r = Math.imul(t ^ (t >>> 15), 1 | t); r ^= r + Math.imul(r ^ (r >>> 7), 61 | r); return ((r ^ (r >>> 14)) >>> 0) / 4294967296; }; }
+
+// ---------- AI world director: the prompt becomes a world spec ----------
+const COLOR = { "green": [11, 3], "dark green": [3, 1], "sand": [15, 9], "white": [7, 6], "grey": [6, 5], "brown": [4, 5], "purple": [13, 2],
+  "blue": [12, 1], "dark blue": [1, 0], "red": [8, 2], "orange": [9, 4], "pink": [14, 2], "black": [0, 5], "yellow": [10, 9] };
+const LIQUID = { water: [12, 1], lava: [8, 9], acid: [11, 3], void: [0, 1], ice: [6, 7] };
+function strSeed(str) { let h = 2166136261; for (const ch of str) h = Math.imul(h ^ ch.charCodeAt(0), 16777619); return h >>> 0; }
+
+let W = null; // current world
+function startWorld(spec, prompt) {
+  W = { spec, prompt, seed: strSeed(prompt) % 1000000, chunks: new Map(), enemies: [], hp: 10, maxHp: 10, st: 100, coins: 0, inv: 0, swing: 0, cool: 0,
+        dead: false, t: 0, seenBiome: new Set(), seenKind: new Set(), p: { x: 0.5, y: 0.5, dir: 1, moving: false } };
+  for (let k = 0; k < 6000; k++) { const x = (k % 77) - 38, y = Math.floor(k / 77) - 38; if (tileAt(x, y).walk) { W.p.x = x + 0.5; W.p.y = y + 0.5; break; } }
+  request(spec.hero);
+  spec.biomes.forEach(b => request(b.ground));
+  document.getElementById("wtitle").textContent = spec.title.toUpperCase();
+  document.getElementById("story").replaceChildren();
+  say(spec.intro);
+  say(`World generated in ${(spec.ms / 1000).toFixed(1)} s from: “${prompt}”`, true);
+}
+
+function tileAt(x, y) {
+  const s = W.seed, e = fbm(x / 22, y / 22, s), t = fbm(x / 70 + 300, y / 70 - 300, s + 3), d = hash(x, y, s + 9);
+  const liq = LIQUID[W.spec.liquid] || LIQUID.water;
+  if (e < 0.33) return { kind: "liquid", c: e < 0.27 ? liq[1] : liq[0], walk: false };
+  const bi = t < 0.42 ? 0 : t < 0.58 ? 1 : 2, col = COLOR[W.spec.biomes[bi].ground_color] || COLOR.green;
+  return { kind: "land", bi, c: e < 0.36 ? col[1] : col[0], alt: col[1], walk: true };
+}
+
+function chunk(cx, cy) {
+  const key = cx + "," + cy;
+  let c = W.chunks.get(key);
+  if (c) return c;
+  c = { objs: new Map() };
+  const r = rng(W.seed * 31 + cx * 7919 + cy * 104729);
+  for (let ty = 0; ty < CH; ty++) for (let tx = 0; tx < CH; tx++) {
+    const x = cx * CH + tx, y = cy * CH + ty, tile = tileAt(x, y);
+    if (!tile.walk || r() > 0.07) continue;
+    if (Math.abs(x - W.p.x) < 3 && Math.abs(y - W.p.y) < 3) continue;
+    const b = W.spec.biomes[tile.bi], roll = r();
+    if (roll < 0.58) c.objs.set(x + "," + y, { x, y, cat: "obstacle", name: b.obstacles[Math.floor(r() * b.obstacles.length)] });
+    else if (roll < 0.86) { const kind = ["heal", "stamina", "treasure", "treasure"][Math.floor(r() * 4)];
+      c.objs.set(x + "," + y, { x, y, cat: "pickup", kind, name: kind === "heal" ? b.heal_item : kind === "stamina" ? b.stamina_item : b.treasure }); }
+    else W.enemies.push({ x: x + 0.5, y: y + 0.5, name: b.enemies[Math.floor(r() * b.enemies.length)], hp: 1, wx: 0, wy: 0, wt: 0 });
+  }
+  W.chunks.set(key, c);
+  return c;
+}
+
+// ---------- live narration (AI dungeon style) ----------
+let narrating = 0;
+function say(text, sys) { const p = document.createElement("p"); if (sys) p.className = "sys"; p.textContent = text; document.getElementById("story").prepend(p); }
+function narrate(event) {
+  if (narrating >= 2) return;
+  narrating++;
+  fetch("/narrate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: W.spec.title, event }) })
+    .then(r => r.json()).then(j => { if (j.text) say(j.text); }).catch(() => {}).finally(() => narrating--);
+}
+function objAt(x, y) { const c = chunk(Math.floor(x / CH), Math.floor(y / CH)); return c.objs.get(x + "," + y); }
+function blocked(fx, fy) {
+  const x = Math.floor(fx), y = Math.floor(fy), o = objAt(x, y);
+  return !tileAt(x, y).walk || (o && o.cat === "obstacle");
+}
+
+// ---------- AI sprite forge ----------
+const sprites = new Map(), queue = [];
+let inflight = 0, made = 0, totalMs = 0, failed = 0;
+function request(name) {
+  if (sprites.has(name)) return;
+  sprites.set(name, { state: "queued" }); queue.push(name); pump();
+}
+function pump() {
+  while (inflight < 8 && queue.length) {
+    const name = queue.shift(); inflight++;
+    fetch("/sprite", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, temperature: 0.75 }) })
+      .then(r => r.json()).then(j => {
+        if (j.error || !j.rows) throw new Error(j.error || "no rows");
+        accept(name, j);
+      }).catch(() => { failed++; sprites.set(name, { state: "failed" }); setTimeout(() => sprites.delete(name), 3000); })
+      .finally(() => { inflight--; pump(); });
+  }
+}
+function accept(name, j) {
+  const c = document.createElement("canvas"); c.width = c.height = 8;
+  const g = c.getContext("2d");
+  j.rows.forEach((row, y) => [...row].forEach((ch, x) => { if (ch !== ".") { g.fillStyle = PICO[HEX.indexOf(ch)]; g.fillRect(x, y, 1, 1); } }));
+  sprites.set(name, { state: "ready", canvas: c, rows: j.rows, ms: j.ms });
+  made++; totalMs += j.ms; addCard(name, c, j.ms);
+}
+function addCard(name, c, ms) {
+  const d = document.createElement("div"); d.className = "sp";
+  const big = document.createElement("canvas"); big.width = big.height = 8; big.getContext("2d").drawImage(c, 0, 0);
+  const label = document.createElement("div"); label.textContent = name; const t = document.createElement("span"); t.textContent = ` ${ms} ms`; label.append(t);
+  d.append(big, label); document.getElementById("sprites").prepend(d);
+}
+document.getElementById("export").onclick = () => {
+  const ready = [...sprites.entries()].filter(([, s]) => s.state === "ready");
+  const cols = 8, rows = Math.ceil(ready.length / cols);
+  let body = "";
+  ready.forEach(([name, s], i) => {
+    const ox = (i % cols) * 9, oy = Math.floor(i / cols) * 9;
+    body += `<g><title>${name.replace(/[<&"]/g, "")}</title>`;
+    s.rows.forEach((row, y) => [...row].forEach((ch, x) => { if (ch !== ".") body += `<rect x="${ox + x}" y="${oy + y}" width="1" height="1" fill="${PICO[HEX.indexOf(ch)]}"/>`; }));
+    body += "</g>";
+  });
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${cols * 9} ${Math.max(rows, 1) * 9}" shape-rendering="crispEdges">${body}</svg>`;
+  const a = document.createElement("a"); a.href = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg); a.download = "atelier-sprites.svg"; a.click();
+};
+
+// fallback 8x8 shapes shown while the AI draws the real sprite
+const FALLBACK = { obstacle: "..5555...566665..56666665566666655666666556666665.566665...5555..", pickup: "...aa....a99a..a9aa9a.a9aa9a9..a99a....aa.......................",
+                   enemy: "........ ..8888...888888.88788788888888888888888888.8.88.8.......", hero: "...99.....ffff....f1f1....ffff...cccccc..f.cc.f...c..c....4..4.." };
+const fallbackCanvas = {};
+for (const [k, s] of Object.entries(FALLBACK)) {
+  const c = document.createElement("canvas"); c.width = c.height = 8; const g = c.getContext("2d"); const flat = s.replace(/ /g, ".").padEnd(64, ".");
+  for (let i = 0; i < 64; i++) if (flat[i] !== ".") { g.fillStyle = PICO[HEX.indexOf(flat[i])]; g.fillRect(i % 8, Math.floor(i / 8), 1, 1); }
+  fallbackCanvas[k] = c;
+}
+function spriteFor(name, cat) {
+  const s = sprites.get(name);
+  if (!s) request(name);
+  return s && s.state === "ready" ? s.canvas : fallbackCanvas[cat];
+}
+
+// ---------- input & loop ----------
+const keys = new Set();
+addEventListener("keydown", e => {
+  keys.add(e.key.toLowerCase());
+  if (["arrowup", "arrowdown", "arrowleft", "arrowright", " "].includes(e.key.toLowerCase())) e.preventDefault();
+  if (e.key === " " && W.cool <= 0 && !W.dead) { W.swing = 0.2; W.cool = 0.35; attack(); }
+  if (e.key.toLowerCase() === "n" || (e.key.toLowerCase() === "r" && W.dead)) showOverlay();
+});
+addEventListener("keyup", e => keys.delete(e.key.toLowerCase()));
+
+function attack() {
+  for (const en of W.enemies) if (en.hp > 0 && Math.hypot(en.x - W.p.x, en.y - W.p.y) < 1.5) {
+    en.hp = 0; const x = Math.floor(en.x), y = Math.floor(en.y);
+    const b = W.spec.biomes[tileAt(x, y).bi || 0];
+    if (!objAt(x, y)) chunk(Math.floor(x / CH), Math.floor(y / CH)).objs.set(x + "," + y, { x, y, cat: "pickup", kind: "treasure", name: b.treasure });
+    if (!W.seenKind.has("kill:" + en.name)) { W.seenKind.add("kill:" + en.name); narrate(`You defeat a ${en.name}.`); }
+  }
+}
+
+function update(dt) {
+  W.t += dt; W.cool -= dt; W.swing -= dt; W.inv -= dt;
+  if (W.dead) return;
+  const p = W.p;
+  let dx = (keys.has("arrowright") || keys.has("d") ? 1 : 0) - (keys.has("arrowleft") || keys.has("a") ? 1 : 0);
+  let dy = (keys.has("arrowdown") || keys.has("s") ? 1 : 0) - (keys.has("arrowup") || keys.has("w") ? 1 : 0);
+  p.moving = dx || dy;
+  const sprint = keys.has("shift") && W.st > 1 && p.moving;
+  W.st = Math.max(0, Math.min(100, W.st + (sprint ? -30 : 14) * dt));
+  if (p.moving) {
+    const len = Math.hypot(dx, dy), sp = (sprint ? 7.5 : 4.2) * dt / len; if (dx) p.dir = dx;
+    const nx = p.x + dx * sp, ny = p.y + dy * sp;
+    if (!blocked(nx + Math.sign(dx) * 0.3, p.y)) p.x = nx;
+    if (!blocked(p.x, ny + Math.sign(dy) * 0.3)) p.y = ny;
+  }
+  const o = objAt(Math.floor(p.x), Math.floor(p.y));
+  if (o && o.cat === "pickup") {
+    chunk(Math.floor(o.x / CH), Math.floor(o.y / CH)).objs.delete(o.x + "," + o.y);
+    if (o.kind === "heal") W.hp = Math.min(W.maxHp, W.hp + 2);
+    if (o.kind === "stamina") W.st = Math.min(100, W.st + 40);
+    if (o.kind === "treasure") W.coins += 1;
+    if (!W.seenKind.has(o.name)) { W.seenKind.add(o.name); narrate(`You pick up a ${o.name}.`); }
+  }
+  const here = tileAt(Math.floor(p.x), Math.floor(p.y));
+  if (here.walk && !W.seenBiome.has(here.bi)) { W.seenBiome.add(here.bi); const b = W.spec.biomes[here.bi]; say(`— ${b.name} —`, true); narrate(`You enter ${b.name}, a land of ${b.ground}.`); }
+  W.enemies = W.enemies.filter(en => en.hp > 0 && Math.abs(en.x - p.x) < 40 && Math.abs(en.y - p.y) < 40);
+  for (const en of W.enemies) {
+    const d = Math.hypot(p.x - en.x, p.y - en.y);
+    if (d < 6) { en.wx = (p.x - en.x) / d; en.wy = (p.y - en.y) / d; }
+    else if ((en.wt -= dt) < 0) { const a = Math.random() * 6.28; en.wx = Math.cos(a); en.wy = Math.sin(a); en.wt = 1 + Math.random() * 2; }
+    const sp = (d < 6 ? 2.2 : 1) * dt, nx = en.x + en.wx * sp, ny = en.y + en.wy * sp;
+    if (!blocked(nx, ny)) { en.x = nx; en.y = ny; }
+    if (d < 0.7 && W.inv <= 0) { W.hp -= 1; W.inv = 1; if (W.hp <= 0) W.dead = true; }
+  }
+  // generate the world (and its sprites) ahead of the player
+  const pcx = Math.floor(p.x / CH), pcy = Math.floor(p.y / CH);
+  for (let cy = pcy - 2; cy <= pcy + 2; cy++) for (let cx = pcx - 2; cx <= pcx + 2; cx++) {
+    const c = chunk(cx, cy);
+    for (const ob of c.objs.values()) request(ob.name);
+  }
+  for (const en of W.enemies) request(en.name);
+}
+
+function draw() {
+  const p = W.p, ox = p.x - VIEW_W / 2, oy = p.y - VIEW_H / 2;
+  const x0 = Math.floor(ox), y0 = Math.floor(oy);
+  for (let y = y0; y <= y0 + VIEW_H + 1; y++) for (let x = x0; x <= x0 + VIEW_W + 1; x++) {
+    const t = tileAt(x, y), sx = Math.round((x - ox) * T), sy = Math.round((y - oy) * T);
+    ctx.fillStyle = PICO[t.c]; ctx.fillRect(sx, sy, T, T);
+    if (t.kind === "land") { const g = sprites.get(W.spec.biomes[t.bi].ground); if (g && g.state === "ready" && hash(x, y, W.seed + 5) < 0.2) { ctx.globalAlpha = 0.3; ctx.drawImage(g.canvas, sx, sy, T, T); ctx.globalAlpha = 1; } }
+    if (t.kind === "liquid" && hash(x, y, W.seed + 33) < 0.06 && Math.floor(W.t * 1.5 + hash(y, x, 2) * 4) % 3 === 0) { ctx.fillStyle = PICO[7]; ctx.fillRect(sx + 6, sy + 12, 12, 3); }
+    if (t.kind === "land" && hash(x, y, W.seed + 21) < 0.18) { ctx.fillStyle = PICO[t.alt]; ctx.fillRect(sx + 8 + Math.floor(hash(x, y, 4) * 12), sy + 8 + Math.floor(hash(y, x, 5) * 12), 4, 4); }
+  }
+  const items = [];
+  for (let cy = Math.floor(y0 / CH); cy <= Math.floor((y0 + VIEW_H + 1) / CH); cy++)
+    for (let cx = Math.floor(x0 / CH); cx <= Math.floor((x0 + VIEW_W + 1) / CH); cx++)
+      for (const o of chunk(cx, cy).objs.values()) items.push({ x: o.x + 0.5, y: o.y + 0.5, name: o.name, cat: o.cat, bob: o.cat === "pickup" ? Math.sin(W.t * 4 + o.x) * 3 : 0 });
+  for (const en of W.enemies) items.push({ x: en.x, y: en.y, name: en.name, cat: "enemy", bob: -Math.abs(Math.sin(W.t * 8 + en.x)) * 5 });
+  items.push({ x: p.x, y: p.y, name: W.spec.hero, cat: "hero", bob: p.moving ? -Math.abs(Math.sin(W.t * 12)) * 3 : 0, hero: true });
+  items.sort((a, b) => a.y - b.y);
+  for (const it of items) {
+    const sx = Math.round((it.x - ox) * T - T / 2), sy = Math.round((it.y - oy) * T - T / 2 + it.bob);
+    if (sx < -T || sy < -T || sx > cv.width || sy > cv.height) continue;
+    const img = spriteFor(it.name, it.cat), size = it.cat === "obstacle" ? T + 8 : T;
+    ctx.save();
+    if (it.hero && p.dir < 0) { ctx.translate(sx + size, 0); ctx.scale(-1, 1); ctx.translate(-sx, 0); }
+    if (it.hero && W.inv > 0 && Math.floor(W.t * 20) % 2) ctx.globalAlpha = 0.35;
+    ctx.drawImage(img, sx - (size - T) / 2, sy - (size - T), size, size);
+    ctx.restore();
+  }
+  if (W.swing > 0) { ctx.strokeStyle = PICO[7]; ctx.lineWidth = 4; ctx.beginPath(); ctx.arc(cv.width / 2, cv.height / 2, T * 1.4, -1.2 + p.dir * 0.3, 1.2 + p.dir * 0.3); ctx.stroke(); }
+  // HUD
+  ctx.fillStyle = "rgba(0,0,0,.55)"; ctx.fillRect(8, 8, 270, 58);
+  for (let i = 0; i < W.maxHp / 2; i++) { const hpv = W.hp - i * 2; ctx.fillStyle = PICO[hpv >= 2 ? 8 : hpv === 1 ? 14 : 5]; ctx.fillRect(16 + i * 22, 16, 16, 14); }
+  ctx.fillStyle = PICO[5]; ctx.fillRect(16, 38, 150, 10); ctx.fillStyle = PICO[W.st > 25 ? 11 : 9]; ctx.fillRect(16, 38, 1.5 * W.st, 10);
+  ctx.fillStyle = PICO[10]; ctx.font = "bold 14px monospace"; ctx.fillText(`¢ ${W.coins}`, 180, 48); ctx.fillText(W.spec.title.slice(0, 16), 180, 28);
+  if (W.dead) { ctx.fillStyle = "rgba(0,0,0,.7)"; ctx.fillRect(0, 0, cv.width, cv.height); ctx.fillStyle = PICO[8]; ctx.font = "bold 36px monospace"; ctx.fillText("GAME OVER", cv.width / 2 - 100, cv.height / 2); ctx.font = "16px monospace"; ctx.fillStyle = PICO[7]; ctx.fillText("press R to imagine a new world", cv.width / 2 - 110, cv.height / 2 + 34); }
+}
+
+let last = performance.now();
+function frame(now) {
+  const dt = Math.max(0, Math.min(0.05, (now - last) / 1000)); last = now;
+  if (!W) { requestAnimationFrame(frame); return; }
+  update(dt); draw();
+  document.getElementById("stat").textContent = `${made} sprites drawn by the model · avg ${made ? Math.round(totalMs / made) : 0} ms · ${inflight} drawing · ${queue.length} queued${failed ? " · " + failed + " failed" : ""}`;
+  requestAnimationFrame(frame);
+}
+const EXAMPLES = ["a haunted swamp kingdom ruled by frog wizards", "a frozen space station overrun by robots", "a candy desert with lemonade oases",
+                  "a lava cave full of fire dragons", "a sunken pirate city under the sea"];
+function showOverlay() { document.getElementById("overlay").classList.remove("hidden"); document.getElementById("wprompt").focus(); }
+async function generateWorld(prompt) {
+  prompt = prompt.trim() || EXAMPLES[0];
+  const st = document.getElementById("wstatus"); st.textContent = "The AI is designing your world…";
+  try {
+    const r = await fetch("/world", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt }) });
+    const spec = await r.json();
+    if (spec.error || !spec.biomes) throw new Error(spec.error || "no world");
+    st.textContent = ""; document.getElementById("overlay").classList.add("hidden");
+    startWorld(spec, prompt);
+  } catch (e) { st.textContent = "World generation failed: " + e.message + " — try again"; }
+}
+document.getElementById("wform").onsubmit = e => { e.preventDefault(); generateWorld(document.getElementById("wprompt").value); };
+for (const ex of EXAMPLES) { const b = document.createElement("button"); b.type = "button"; b.textContent = ex; b.onclick = () => { document.getElementById("wprompt").value = ex; generateWorld(ex); }; document.getElementById("wchips").append(b); }
+const params = new URLSearchParams(location.search);
+if (params.has("prompt") && params.has("preload")) {  // test hook: build the world synchronously so a page screenshot shows real AI output
+  const sync = (url, body) => { const x = new XMLHttpRequest(); x.open("POST", url, false); x.setRequestHeader("Content-Type", "application/json"); x.send(JSON.stringify(body)); return JSON.parse(x.responseText); };
+  document.getElementById("overlay").classList.add("hidden");
+  startWorld(sync("/world", { prompt: params.get("prompt") }), params.get("prompt"));
+  update(0);
+  for (const name of [...sprites.keys()]) { try { const j = sync("/sprite", { name, temperature: 0.75 }); if (j.rows) accept(name, j); } catch {} }
+  queue.length = 0; draw();
+} else if (params.has("prompt")) generateWorld(params.get("prompt"));
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
